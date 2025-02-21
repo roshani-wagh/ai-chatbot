@@ -56,7 +56,7 @@ def ingest_documents(file_path: str):
                 documents = [Document(page_content=ocr_text, metadata={"source": file_path})]
 
     # Split into chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=250, chunk_overlap=50)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     chunks = text_splitter.split_documents(documents)
     return chunks
 
