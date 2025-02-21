@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+langchain
+openai
+faiss-cpu
+python-dotenv
+pinecone-client
+langchain-community
+python-multipart
+langchain-openai
+boto3
