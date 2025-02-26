@@ -7,11 +7,11 @@ import boto3
 import logging
 import tempfile
 from ingest import ingest_documents, create_vector_store_with_retry, create_or_load_faiss
-from rag_bot import create_rag_bot, ask_question
+from rag_bot import create_rag_bot, ask_question, load_csv_from_s3
 from config import S3_BUCKET_NAME
 
 class QuestionRequest(BaseModel):
-    query: str
+    question: str
 
     class Config:
         json_schema_extra = {
@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 s3_client = boto3.client("s3")
 vector_store = None
+
+file_urls = load_csv_from_s3(S3_BUCKET_NAME, "Urls.csv")
 
 @app.on_event("startup")
 async def startup_event():
@@ -70,7 +72,7 @@ async def upload_document(file: UploadFile):
         return {"message": f"Failed to upload document: {e}"}
 
 @app.post("/ask/", response_model=QuestionResponse)
-async def ask(question: QuestionRequest):
+async def ask(request: QuestionRequest):
     """
     Ask a question about the uploaded documents.
     """
@@ -94,10 +96,11 @@ async def ask(question: QuestionRequest):
     try:
         # Create RAG bot with the vector store
         qa_chain = create_rag_bot(vector_store)
-        answer, sources = ask_question(qa_chain, question.query)
+        answer, sources = ask_question(qa_chain, request.question, file_urls)
 
         return QuestionResponse(answer=answer, sources=sources)
     
     except Exception as e:
         logger.error(f"⚠️ Internal Server Error: {e}")
         raise HTTPException(status_code=500, detail=f"⚠️ Internal Server Error: {str(e)}")
+

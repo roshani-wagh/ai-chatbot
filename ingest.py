@@ -10,6 +10,7 @@ from langchain.schema import Document
 from pdf2image import convert_from_path
 import pytesseract
 from config import S3_BUCKET_NAME
+import pandas as pd
 
 # Paths
 DOCS_DIR = "stored_documents"
