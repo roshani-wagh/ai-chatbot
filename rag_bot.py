@@ -119,15 +119,16 @@ def ask_question(qa_chain, question, file_urls):
             
             # Extract sources with better fallback handling
             sources = response.get("source_documents", [])
-            if not sources and 'sources' in response:
-                sources_text = response.get("sources", "")
-                return answer, [sources_text] if sources_text else []
 
             source_list = set()
             for doc in sources:
                 # source_path = doc.metadata.get("source", "Unknown").replace("/tmp/", "")
                 source_path = os.path.basename(doc.metadata.get("source", "Unknown"))
-                source_list.add(file_urls.get(source_path, source_path))
+                if source_path in file_urls:
+                    source_list.add(file_urls[source_path])
+
+                if not source_list:
+                    return answer, []
 
 
             logger.info(f"Successfully generated answer: {answer[:100]}...")
