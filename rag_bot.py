@@ -7,8 +7,6 @@ from langchain.prompts import PromptTemplate
 import logging
 import boto3
 import csv
-import difflib
-import rapidfuzz
 from fuzzywuzzy import process, fuzz
 
 logger = logging.getLogger(__name__)
@@ -36,9 +34,9 @@ def load_csv_from_s3(bucket_name, csv_key):
 def create_rag_bot(vector_store):
 
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 5})
-    
+
     llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.2)
-    
+
     prompt_template = """You are an expert knowledge assistant. Use the following pieces of retrieved context to answer the question thoroughly and accurately.
 
 Context:
@@ -66,12 +64,12 @@ Instructions:
     If the information comes from an article, provide a source link from the "Learn More" section at the end.
 -Retrieve and reference all relevant parts of the uploaded PDFs before answering. Think step by step and provide a detailed response.
 Answer:"""
-    
+
     PROMPT = PromptTemplate(
         template=prompt_template,
         input_variables=["context", "question"]
     )
-    
+
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",
@@ -79,7 +77,7 @@ Answer:"""
         return_source_documents=True,
         chain_type_kwargs={"prompt": PROMPT}
     )
-    
+
     return qa_chain
 
 static_answers = {
@@ -103,32 +101,43 @@ def get_static_answer(question):
 
     return None
 
-def ask_question(qa_chain, question, file_urls):
+def ask_question(qa_chain, question, file_urls, keywords=None):
     static_answer = get_static_answer(question)
 
     if static_answer:
-        return static_answer, []
+        return static_answer, [], False
 
     if not question.strip():
-        return "⚠️ Please provide a valid question.", []
+        return "⚠️ Please provide a valid question.", [], False
 
     try:
         logger.info(f"Processing query: {question}")
 
+        enhanced_question = question
+        if keywords:
+            keywords_list = [k.strip() for k in keywords.split(',')]
+            enhanced_question = f"{question} {' '.join(keywords_list)}"
+            logger.info(f"Enhanced question with keywords: {enhanced_question}")
+
+            # Increase document retrieval scope when keywords are provided
+            if hasattr(qa_chain, 'retriever'):
+                qa_chain.retriever.search_kwargs["k"] = 8
+
+
         # Check if question matches any static answer
         for key, answer_text in static_answers.items():
             if key in question.lower():
-                return answer_text, []  # Return static answer immediately
+                return answer_text, [], False
 
         expected_keys = getattr(qa_chain, 'input_keys', ['unknown'])
         logger.info(f"Chain expects these input keys: {expected_keys}")
 
         if 'question' in expected_keys:
-            response = qa_chain({"question": question})
+            response = qa_chain({"question": enhanced_question})
         elif 'query' in expected_keys:
-            response = qa_chain({"query": question})
+            response = qa_chain({"query": enhanced_question})
         else:
-            input_param = {expected_keys[0]: question}
+            input_param = {expected_keys[0]: enhanced_question}
             response = qa_chain(input_param)
 
         if isinstance(response, dict):
@@ -142,7 +151,7 @@ def ask_question(qa_chain, question, file_urls):
             }
 
             if answer in non_contextual_responses or "not sure how to answer" in answer.lower():
-                return answer, []
+                return answer, [], True
 
             rejection_patterns = [
                 "I’m sorry, I can’t provide a response",
@@ -151,7 +160,7 @@ def ask_question(qa_chain, question, file_urls):
             ]
 
             if any(pattern in answer for pattern in rejection_patterns):
-                return answer, []
+                return answer, [], True
 
             sources = response.get("source_documents", [])
             source_list = set()
@@ -167,12 +176,12 @@ def ask_question(qa_chain, question, file_urls):
             logger.info(f"Successfully generated answer: {answer[:100]}...")
             logger.info(f"Sources: {source_list}")
 
-            return answer, list(source_list)
+            return answer, list(source_list), False
 
         else:
             logger.error(f"Unexpected response type: {type(response)}")
-            return "⚠️ Received an unexpected response format.", []
+            return "⚠️ Received an unexpected response format.", [], True
 
     except Exception as e:
         logger.error(f"⚠️ Error processing query: {e}", exc_info=True)
-        return f"⚠️ Error processing query: {str(e)}", []
+        return f"⚠️ Error processing query: {str(e)}", [], True

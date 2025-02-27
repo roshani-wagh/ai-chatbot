@@ -20,9 +20,15 @@ class QuestionRequest(BaseModel):
             }
         }
 
+class KeywordClarificationRequest(BaseModel):
+    question: str
+    keywords: str
+
+
 class QuestionResponse(BaseModel):
     answer: str
     sources: list[str]
+    needs_clarification: bool
 
 app = FastAPI()
 
@@ -94,9 +100,9 @@ async def ask(request: QuestionRequest):
 
     try:
         qa_chain = create_rag_bot(vector_store)
-        answer, sources = ask_question(qa_chain, request.question, file_urls)
+        answer, sources, needs_clarification_flag = ask_question(qa_chain, request.question, file_urls)
 
-        return QuestionResponse(answer=answer, sources=sources)
+        return QuestionResponse(answer=answer, sources=sources, needs_clarification=needs_clarification_flag)
 
     except Exception as e:
         logger.error(f"⚠️ Internal Server Error: {e}")
