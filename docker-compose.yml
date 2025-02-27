@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  chatbot-app:
+    build: .  # Builds from the Dockerfile in the current directory
+    container_name: chatbot-app
+    env_file:
+      - .env  # Loads environment variables from .env file
+    volumes:
+      - .:/app  # Mounts current directory to /app inside the container
+    ports:
+      - "8000:8000"  # If your app runs on a specific port (adjust as needed)
+    restart: always  # Ensures the container restarts on failure

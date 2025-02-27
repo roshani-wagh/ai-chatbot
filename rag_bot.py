@@ -7,23 +7,17 @@ from langchain.prompts import PromptTemplate
 import logging
 import boto3
 import csv
-from langchain.chains.question_answering import load_qa_chain
-
-from config import S3_BUCKET_NAME
-
 logger = logging.getLogger(__name__)
 
 s3_client = boto3.client("s3")
 
 def load_csv_from_s3(bucket_name, csv_key):
-    """Downloads and parses a CSV from S3, returning a dictionary mapping filenames to URLs."""
     file_url_map = {}
 
     try:
         response = s3_client.get_object(Bucket=bucket_name, Key=csv_key)
         csv_content = response["Body"].read().decode("utf-8")
 
-        # Read CSV content into dictionary
         csv_reader = csv.DictReader(StringIO(csv_content))
         for row in csv_reader:
             file_url_map[row["filename"]] = row["url"]
@@ -36,15 +30,11 @@ def load_csv_from_s3(bucket_name, csv_key):
     return file_url_map
 
 def create_rag_bot(vector_store):
-    """Creates an improved Retrieval-Augmented Generation (RAG) bot with better answer quality."""
-    
-    # Increase k to retrieve more relevant documents
+
     retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 5})
     
-    # Use a more capable model with slightly higher temperature for more detailed responses
     llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0.2)
     
-    # Create a comprehensive prompt that encourages detailed answers
     prompt_template = """You are an expert knowledge assistant. Use the following pieces of retrieved context to answer the question thoroughly and accurately.
 
 Context:
@@ -57,7 +47,7 @@ Instructions:
 -Strictly categorize the question before responding:
     If the question is related to self-harm, respond with:
     "I detected a statement that you intend to cause yourself harm. Please visit https://help.ea.com/en for any help."
-    If the question contains toxic or inappropriate language, respond with:
+    If the question contains toxic or inappropriate language or doesnt match context, respond with:
     "I’m sorry, I can’t provide a response, as your question appears to be inappropriate and not related to EA."
     If the question is a greeting (e.g., "hi," "hello," "how are you?"), respond with:
     "Hi, how can I help you? Please ask me a question related to EA."
@@ -77,7 +67,6 @@ Answer:"""
         input_variables=["context", "question"]
     )
     
-    # Create custom QA chain with the refactored prompt
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",
@@ -88,57 +77,66 @@ Answer:"""
     
     return qa_chain
 
-
-
 def ask_question(qa_chain, question, file_urls):
-
-    file_urls= file_urls
     if not question.strip():
         return "⚠️ Please provide a valid question.", []
-    
+
     try:
         logger.info(f"Processing query: {question}")
-        
-        # Debug the expected input keys
+
         expected_keys = getattr(qa_chain, 'input_keys', ['unknown'])
         logger.info(f"Chain expects these input keys: {expected_keys}")
-        
-        # Try with the most common parameter names
+
         if 'question' in expected_keys:
             response = qa_chain({"question": question})
         elif 'query' in expected_keys:
             response = qa_chain({"query": question})
         else:
-            # Default fallback using the first expected key
             input_param = {expected_keys[0]: question}
             response = qa_chain(input_param)
-        
-        # Extract answer with better fallback handling
+
         if isinstance(response, dict):
             answer = response.get("result") or response.get("answer") or "⚠️ No answer found in response."
-            
-            # Extract sources with better fallback handling
-            sources = response.get("source_documents", [])
 
+            non_contextual_responses = {
+                "I’m sorry, I can’t provide a response, as your question appears to be inappropriate and not related to EA.",
+                "Hi, how can I help you? Please ask me a question related to EA.",
+                "Goodbye! If you have any more questions in the future, feel free to ask. Have a great day.",
+                "I detected a statement that you intend to cause yourself harm. Please visit https://help.ea.com/en for any help."
+            }
+
+            if answer in non_contextual_responses or "not sure how to answer" in answer.lower():
+                return answer, []
+
+            rejection_patterns = [
+                "I’m sorry, I can’t provide a response",
+                "I am unable to answer that",
+                "This question is inappropriate"
+            ]
+
+            if any(pattern in answer for pattern in rejection_patterns):
+                return answer, []
+
+            sources = response.get("source_documents", [])
             source_list = set()
             for doc in sources:
-                # source_path = doc.metadata.get("source", "Unknown").replace("/tmp/", "")
                 source_path = os.path.basename(doc.metadata.get("source", "Unknown"))
                 if source_path in file_urls:
                     source_list.add(file_urls[source_path])
 
-                if not source_list:
-                    return answer, []
-
+            if source_list:
+                sources_text = "\n\n Learn more at:\n" + "\n".join(source_list)
+                answer += sources_text
 
             logger.info(f"Successfully generated answer: {answer[:100]}...")
             logger.info(f"Sources: {source_list}")
-            
+
             return answer, list(source_list)
+
         else:
             logger.error(f"Unexpected response type: {type(response)}")
             return "⚠️ Received an unexpected response format.", []
-        
+
     except Exception as e:
         logger.error(f"⚠️ Error processing query: {e}", exc_info=True)
         return f"⚠️ Error processing query: {str(e)}", []

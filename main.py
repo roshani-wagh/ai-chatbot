@@ -80,11 +80,10 @@ async def ask(request: QuestionRequest):
 
     if vector_store is None:
         try:
-            # Try loading vector store again
             vector_store = create_or_load_faiss()
             if vector_store is None:
                 raise HTTPException(
-                    status_code=400, 
+                    status_code=400,
                     detail="⚠️ No documents available. Please upload a document first."
                 )
         except Exception as e:
@@ -94,13 +93,11 @@ async def ask(request: QuestionRequest):
             )
 
     try:
-        # Create RAG bot with the vector store
         qa_chain = create_rag_bot(vector_store)
         answer, sources = ask_question(qa_chain, request.question, file_urls)
 
         return QuestionResponse(answer=answer, sources=sources)
-    
+
     except Exception as e:
         logger.error(f"⚠️ Internal Server Error: {e}")
         raise HTTPException(status_code=500, detail=f"⚠️ Internal Server Error: {str(e)}")
-

@@ -1,6 +1,7 @@
 import os
 import faiss
 import boto3
+import logging
 import tempfile
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
@@ -10,14 +11,13 @@ from langchain.schema import Document
 from pdf2image import convert_from_path
 import pytesseract
 from config import S3_BUCKET_NAME
-import pandas as pd
 
-# Paths
 DOCS_DIR = "stored_documents"
 FAISS_INDEX_DIR = "faiss_index"
 FAISS_INDEX_NAME = "latest.index"
 FAISS_INDEX_PATH = os.path.join(FAISS_INDEX_DIR, FAISS_INDEX_NAME)
-
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 # S3 Client
 s3_client = boto3.client("s3")
 
@@ -25,7 +25,6 @@ s3_client = boto3.client("s3")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
 def extract_text_from_image_pdf(pdf_path):
-    """Extract text from image-based PDFs using OCR."""
     text = ""
     try:
         images = convert_from_path(pdf_path)  # Convert PDF pages to images
@@ -37,9 +36,6 @@ def extract_text_from_image_pdf(pdf_path):
         return ""
 
 def ingest_documents(file_path: str):
-    """
-    Ingest documents from a file path and return chunks of text.
-    """
     documents = []
 
     if file_path.endswith(".txt"):
@@ -49,20 +45,17 @@ def ingest_documents(file_path: str):
         loader = PyPDFLoader(file_path)
         documents = loader.load()
 
-        # If no text extracted, try OCR
         if not documents or all(not doc.page_content.strip() for doc in documents):
             print(f"⚠️ No text found in {file_path}, using OCR...")
             ocr_text = extract_text_from_image_pdf(file_path)
             if ocr_text:
                 documents = [Document(page_content=ocr_text, metadata={"source": file_path})]
 
-    # Split into chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
     chunks = text_splitter.split_documents(documents)
     return chunks
 
 def create_or_load_faiss():
-    """Loads FAISS index if available; otherwise, creates a new one."""
     os.makedirs(FAISS_INDEX_DIR, exist_ok=True)
     embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
 
@@ -82,10 +75,9 @@ def create_or_load_faiss():
     except Exception as e:
         print(f"⚠️ No FAISS index found in S3. Creating a new one... ({e})")
 
-    # Create new FAISS index
     print("🔹 Creating a new FAISS index...")
-    dimension = 1536  # OpenAI embedding dimension
-    index = faiss.IndexFlatL2(dimension)  # Empty FAISS index
+    dimension = 1536
+    index = faiss.IndexFlatL2(dimension)
     vector_store = FAISS(embedding_function=embeddings, index=index, docstore={}, index_to_docstore_id={})
 
     vector_store.save_local(FAISS_INDEX_DIR)
@@ -94,24 +86,20 @@ def create_or_load_faiss():
     return vector_store
 
 def create_vector_store_with_retry(chunks, api_key):
-    """Creates or updates the FAISS vector store with error handling."""
     embeddings = OpenAIEmbeddings(openai_api_key=api_key)
 
     try:
         if not chunks:
             raise ValueError("⚠️ No valid text chunks found. Cannot create FAISS index.")
 
-        # Load existing FAISS store or create a new one
         vector_store = create_or_load_faiss()
         print(f"✅ Loaded FAISS store, adding {len(chunks)} chunks...")
 
         vector_store.add_documents(chunks)
 
-        # Save FAISS index locally
         vector_store.save_local(FAISS_INDEX_DIR)
         print("✅ FAISS index updated and saved locally!")
 
-        # Upload FAISS index to S3
         with open(FAISS_INDEX_PATH, "rb") as buffer:
             s3_client.upload_fileobj(buffer, S3_BUCKET_NAME, FAISS_INDEX_NAME)
         print("✅ FAISS index uploaded to S3!")
@@ -120,16 +108,13 @@ def create_vector_store_with_retry(chunks, api_key):
     except Exception as e:
         print(f"⚠️ Error updating FAISS index: {e}")
 
-        # Try creating a new FAISS index if updating fails
         try:
             print(f"🔹 Creating a new FAISS index with {len(chunks)} chunks...")
             vector_store = FAISS.from_documents(chunks, embeddings)
 
-            # Save FAISS index locally
             vector_store.save_local(FAISS_INDEX_DIR)
             print("✅ New FAISS index created and saved locally!")
 
-            # Upload FAISS index to S3
             with open(FAISS_INDEX_PATH, "rb") as buffer:
                 s3_client.upload_fileobj(buffer, S3_BUCKET_NAME, FAISS_INDEX_NAME)
             print("✅ New FAISS index uploaded to S3!")
@@ -138,6 +123,6 @@ def create_vector_store_with_retry(chunks, api_key):
         except Exception as e2:
             print(f"⚠️ Critical error creating FAISS store: {e2}")
             raise RuntimeError(f"Failed to create FAISS vector store. Root cause: {e2}")
+
 def load_vector_store():
-    """Loads FAISS vector store and returns a retriever."""
     return create_or_load_faiss().as_retriever(search_type="similarity", search_kwargs={"k": 3})

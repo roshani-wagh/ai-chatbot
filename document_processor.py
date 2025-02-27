@@ -14,7 +14,6 @@ async def process_document(filename: str):
         s3_object = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=filename)
         file_stream = s3_object["Body"].read()
 
-        # 🔹 Save to a temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
             temp_file.write(file_stream)
             temp_file_path = temp_file.name
