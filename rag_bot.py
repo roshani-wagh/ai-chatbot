@@ -7,6 +7,10 @@ from langchain.prompts import PromptTemplate
 import logging
 import boto3
 import csv
+import difflib
+import rapidfuzz
+from fuzzywuzzy import process, fuzz
+
 logger = logging.getLogger(__name__)
 
 s3_client = boto3.client("s3")
@@ -60,6 +64,7 @@ Instructions:
     Provide a detailed response with at least 5 numbered points (unless unnecessary for short, direct answers).
     Include specific details from the provided context.
     If the information comes from an article, provide a source link from the "Learn More" section at the end.
+-Retrieve and reference all relevant parts of the uploaded PDFs before answering. Think step by step and provide a detailed response.
 Answer:"""
     
     PROMPT = PromptTemplate(
@@ -77,12 +82,43 @@ Answer:"""
     
     return qa_chain
 
+static_answers = {
+            "refund ": "Find out how to get a refund for games that qualify under the great game guarantee policy here: \nhttps://help.ea.com/en-us/help/account/returns-and-cancellations/",
+            "delete account": "To delete your Ea account, visit https://help.ea.com/en/help/account/close-ea-account",
+            "reset password": "To reset your password, visit https://ea.com/reset-password",
+            "crafting legend tokens": "Find out more about Crafting Metals and Legend Tokens on this site \nhttps://help.ea.com/in/solutions/?product=apex-legends&platform=&topic=metals-tokens-info",
+            "crafting metals" : "Find out more about Crafting and Legend Tokens on this site \nhttps://help.ea.com/in/solutions/?product=apex-legends&platform=&topic=metals-tokens-info",
+            "reset rank" : "Please refer this link to get more help on resetting rank \nhttps://help.ea.com/in/solutions/?product=apex-legends&topic=emerging-technical-support-09",
+            "progress restore" : "Check out what you can do to get back in the game here: \nhttps://help.ea.com/in/help/apex-legends/apex-legends/game-progress",
+        }
+
+def get_static_answer(question):
+    best_match = process.extractOne(question.lower(), static_answers.keys(), scorer=fuzz.token_sort_ratio)
+
+    if best_match:
+        matched_key, score = best_match[0], best_match[1]  # Extract matched string and score
+
+        if score > 65:  # Adjust threshold as needed
+            return static_answers[matched_key]
+
+    return None
+
 def ask_question(qa_chain, question, file_urls):
+    static_answer = get_static_answer(question)
+
+    if static_answer:
+        return static_answer, []
+
     if not question.strip():
         return "⚠️ Please provide a valid question.", []
 
     try:
         logger.info(f"Processing query: {question}")
+
+        # Check if question matches any static answer
+        for key, answer_text in static_answers.items():
+            if key in question.lower():
+                return answer_text, []  # Return static answer immediately
 
         expected_keys = getattr(qa_chain, 'input_keys', ['unknown'])
         logger.info(f"Chain expects these input keys: {expected_keys}")

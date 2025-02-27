@@ -13,3 +13,6 @@ pdf2image
 pytesseract
 pypdf
 pandas
+rapidfuzz
+fuzzywuzzy
+aioboto3
